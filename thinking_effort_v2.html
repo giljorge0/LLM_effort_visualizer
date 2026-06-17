@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Thinking Effort Visualizer v2</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f9f9f8;
+  --surface: #ffffff;
+  --surface2: #f1f0ea;
+  --border: rgba(0,0,0,0.12);
+  --text: #1a1a18;
+  --text2: #6b6b66;
+  --text3: #9b9b95;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", "Fira Mono", monospace;
+  --green: #1D9E75;
+  --amber: #BA7517;
+  --red: #A32D2D;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a18;
+    --surface: #242422;
+    --surface2: #2e2e2b;
+    --border: rgba(255,255,255,0.1);
+    --text: #e8e8e2;
+    --text2: #9b9b95;
+    --text3: #6b6b66;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.6;
+  min-height: 100vh;
+  padding: 2rem 1rem 4rem;
+}
+
+.container { max-width: 720px; margin: 0 auto; }
+
+h1 { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+h2 { font-size: 15px; font-weight: 500; margin: 0 0 0.75rem; }
+
+.subtitle { font-size: 13px; color: var(--text2); margin-bottom: 1.5rem; }
+
+.section {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.api-row { display: flex; gap: 8px; margin-bottom: 1.5rem; }
+
+.api-row input {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--mono);
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+textarea {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  padding: 12px;
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.6;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  display: block;
+}
+
+textarea:focus, input:focus { outline: none; border-color: rgba(0,0,0,0.3); }
+
+.row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+
+button {
+  padding: 8px 18px;
+  font-size: 14px;
+  font-family: var(--font);
+  cursor: pointer;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  transition: background 0.15s, transform 0.1s;
+}
+
+button:hover { background: var(--surface2); }
+button:active { transform: scale(0.98); }
+button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+button.primary { border-color: rgba(0,0,0,0.3); font-weight: 500; }
+button.small { font-size: 12px; padding: 5px 10px; }
+
+.budget-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 1rem 0;
+  font-size: 13px;
+  color: var(--text2);
+}
+.budget-row input[type=range] { flex: 1; }
+.budget-row span { min-width: 70px; font-variant-numeric: tabular-nums; }
+
+#status {
+  font-size: 13px;
+  color: var(--text2);
+  min-height: 20px;
+  margin: 1rem 0;
+}
+
+.dot {
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--text2);
+  margin: 0 2px;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes pulse {
+  0%,80%,100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+#result { display: none; }
+
+.badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1.25rem; }
+
+.badge {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* prediction vs actual bar */
+.bar-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bar-track {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  background: var(--surface2);
+  border-radius: 99px;
+  overflow: visible;
+  margin-bottom: 6px;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  width: 0%;
+  background: var(--green);
+  transition: width 0.25s linear, background 0.4s ease;
+  overflow: hidden;
+}
+
+.bar-marker {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--text);
+  opacity: 0.5;
+  left: 0%;
+}
+
+.bar-marker-label {
+  position: absolute;
+  top: -22px;
+  font-size: 11px;
+  color: var(--text3);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.bar-footer {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 1.25rem;
+}
+
+.bar-footer .overtime { color: var(--red); font-weight: 500; }
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 1.25rem;
+}
+
+.metric {
+  background: var(--surface2);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.metric-label {
+  font-size: 11px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.metric-value { font-size: 22px; font-weight: 500; line-height: 1.2; }
+.metric-sub { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+details { margin-bottom: 1.25rem; }
+
+summary {
+  font-size: 13px;
+  color: var(--text2);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+summary::before { content: "▶"; font-size: 10px; transition: transform 0.2s; }
+details[open] summary::before { transform: rotate(90deg); }
+
+.trace {
+  margin-top: 8px;
+  background: var(--surface2);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.7;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.trace mark {
+  background: rgba(186, 117, 23, 0.25);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.divider { border: none; border-top: 0.5px solid var(--border); margin: 1.25rem 0; }
+
+.answer-label {
+  font-size: 11px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.answer-text { font-size: 15px; line-height: 1.75; white-space: pre-wrap; }
+
+.history { margin-top: 1.5rem; display: none; }
+
+.history-label {
+  font-size: 11px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.chart-wrap { position: relative; width: 100%; height: 180px; }
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+@media (max-width: 560px) { .chart-grid { grid-template-columns: 1fr; } }
+
+.weights-area {
+  width: 100%;
+  min-height: 70px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px;
+  background: var(--surface2);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+.small-note { font-size: 12px; color: var(--text3); margin-top: 6px; }
+
+.deceptive-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--surface2);
+  font-size: 13px;
+  margin-top: 1rem;
+  border-left: 3px solid var(--red);
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>LLM Thinking Effort Visualizer v2</h1>
+  <p class="subtitle">Pre-inference prediction, live streaming telemetry, cognitive churn analysis, and deceptive-simplicity detection — all from real signals.</p>
+
+  <div class="api-row">
+    <input type="password" id="api-key" placeholder="sk-ant-… (stays local, never sent anywhere but Anthropic)">
+  </div>
+
+  <div class="budget-row">
+    <span>thinking budget</span>
+    <input type="range" id="budget" min="1000" max="16000" step="1000" value="8000">
+    <span id="budget-val">8,000 tokens</span>
+  </div>
+
+  <details class="section" style="margin-bottom: 1.5rem;">
+    <summary>predictor weights (advanced)</summary>
+    <p class="small-note" style="margin: 10px 0 6px;">
+      Default weights are a hand-tuned heuristic. Paste JSON output from <code>train_predictor.py</code> to use fitted weights instead.
+    </p>
+    <textarea class="weights-area" id="weights-input" placeholder='{"bias": 100, "log_words": 150, "question_marks": 80, "logic_words": 250, "constraint_words": 200, "multipart": 150, "ambiguity": 100, "code_markers": 300, "numbers": 50}'></textarea>
+    <div class="row">
+      <button class="small" id="apply-weights">apply weights</button>
+      <button class="small" id="reset-weights">reset to default</button>
+    </div>
+  </details>
+
+  <textarea id="prompt" placeholder="Ask anything. Compare shallow vs deep questions to see the difference."></textarea>
+
+  <div class="row">
+    <button class="primary" id="submit-btn">Ask ↗</button>
+    <button class="small" onclick="setQ('What is the capital of France?')">trivial</button>
+    <button class="small" onclick="setQ('Explain how transformers work in neural networks')">medium</button>
+    <button class="small" onclick="setQ('A farmer has 17 sheep. All but 9 die. How many are left? What class of trick question is this and why do humans consistently fail it?')">hard</button>
+    <button class="small" onclick="setQ('Is P equal to NP? Argue both sides.')">brutal</button>
+    <button class="small" onclick="setQ('How many words are in your response to this exact prompt?')">deceptive</button>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="result">
+
+    <div class="section">
+      <h2>effort vs prediction</h2>
+      <div class="badge-row" id="badge-row"></div>
+
+      <div class="bar-header">
+        <span>actual reasoning effort</span>
+        <span id="bar-pct-label">0%</span>
+      </div>
+      <div class="bar-track">
+        <div class="bar-fill" id="bar-fill"></div>
+        <div class="bar-marker" id="bar-marker"></div>
+        <div class="bar-marker-label" id="bar-marker-label"></div>
+      </div>
+      <div class="bar-footer">
+        <span id="bar-actual-label">actual: 0 tokens</span>
+        <span id="bar-predicted-label">predicted: — tokens</span>
+      </div>
+
+      <div id="deceptive-flag-wrap"></div>
+    </div>
+
+    <div class="section">
+      <h2>metrics</h2>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">reasoning tokens</div>
+          <div class="metric-value" id="m-think">—</div>
+          <div class="metric-sub">actual, streamed</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">output tokens</div>
+          <div class="metric-value" id="m-out">—</div>
+          <div class="metric-sub">answer length</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">think / answer</div>
+          <div class="metric-value" id="m-ratio">—</div>
+          <div class="metric-sub">higher = harder</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">complexity</div>
+          <div class="metric-value" id="m-class" style="font-size:16px;">—</div>
+          <div class="metric-sub">from real signal</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">cognitive churn</div>
+          <div class="metric-value" id="m-churn">—</div>
+          <div class="metric-sub">pivots per 100 tok</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">prediction error</div>
+          <div class="metric-value" id="m-error" style="font-size:16px;">—</div>
+          <div class="metric-sub">actual vs predicted</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <details open>
+        <summary>thinking trace (pivots highlighted)</summary>
+        <div class="trace" id="trace"></div>
+      </details>
+
+      <hr class="divider">
+      <div class="answer-label">answer</div>
+      <div class="answer-text" id="answer"></div>
+    </div>
+
+  </div>
+
+  <div class="history" id="history">
+    <div class="chart-grid">
+      <div>
+        <div class="history-label">reasoning tokens per query</div>
+        <div class="chart-wrap"><canvas id="chart-tokens" role="img" aria-label="Bar chart of reasoning tokens used per query"></canvas></div>
+      </div>
+      <div>
+        <div class="history-label">predicted vs actual (deceptive-simplicity)</div>
+        <div class="chart-wrap"><canvas id="chart-scatter" role="img" aria-label="Scatter plot of predicted versus actual reasoning tokens, highlighting prompts that were predicted simple but turned out hard"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+/* ---------------------------------------------------------------
+   Complexity classes
+--------------------------------------------------------------- */
+const CLASSES = [
+  { max: 200,  label: 'trivial',  color: '#1D9E75', bg: '#E1F5EE' },
+  { max: 800,  label: 'simple',   color: '#3B6D11', bg: '#EAF3DE' },
+  { max: 2000, label: 'moderate', color: '#BA7517', bg: '#FAEEDA' },
+  { max: 4000, label: 'complex',  color: '#D85A30', bg: '#FAECE7' },
+  { max: Infinity, label: 'hard', color: '#A32D2D', bg: '#FCEBEB' },
+];
+function classify(tokens) { return CLASSES.find(c => tokens < c.max); }
+
+/* ---------------------------------------------------------------
+   Pre-inference predictor: feature extraction + linear model.
+   Feature names match train_predictor.py so weights are portable.
+--------------------------------------------------------------- */
+const DEFAULT_WEIGHTS = {
+  bias: 100,
+  log_words: 150,
+  question_marks: 80,
+  logic_words: 250,
+  constraint_words: 200,
+  multipart: 150,
+  ambiguity: 100,
+  code_markers: 300,
+  numbers: 50
+};
+
+let predictorWeights = { ...DEFAULT_WEIGHTS };
+
+const LOGIC_WORDS = ['prove','derive','why','how','explain','analyze','analyse','compare',
+  'calculate','solve','optimi','design','debug','reasoning','algorithm','trade-off','tradeoff',
+  'implications','justify','evaluate','derive','generalis','generaliz'];
+const CONSTRAINT_WORDS = ['must','only','except','exclude','without','all but','neither',
+  'unless','given that','at least','at most','no more than','cannot','not allowed'];
+const AMBIGUITY_WORDS = ['could','might','depends','maybe','possibly','arguably','perhaps'];
+const PIVOT_PHRASES = ['wait', 'actually', 'hold on', 'let me reconsider', 'on second thought',
+  'alternatively', 'hmm', 'no wait', 'let me re-check', 'let me recheck', "i made an error",
+  "that's wrong", "that is wrong", 'let me redo', 'scratch that', 'rethink', 'on reflection',
+  'let me double-check', 'let me double check', 'this is incorrect', 'i need to reconsider'];
+
+function countOccurrences(text, terms) {
+  const lower = text.toLowerCase();
+  let count = 0;
+  for (const term of terms) {
+    const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+    const matches = lower.match(re);
+    if (matches) count += matches.length;
+  }
+  return count;
+}
+
+function extractFeatures(prompt) {
+  const wordCount = prompt.split(/\s+/).filter(Boolean).length;
+  const questionMarks = (prompt.match(/\?/g) || []).length;
+  const logicWords = countOccurrences(prompt, LOGIC_WORDS);
+  const constraintWords = countOccurrences(prompt, CONSTRAINT_WORDS);
+  const ambiguity = countOccurrences(prompt, AMBIGUITY_WORDS);
+  const numberedItems = (prompt.match(/\b\d+[\.\)]/g) || []).length;
+  const andCount = (prompt.toLowerCase().match(/\band\b/g) || []).length;
+  const multipart = numberedItems + Math.max(0, andCount - 1);
+  const codeMarkers = /```|function |def |class |import |for\(|for \(|while\(/.test(prompt) ? 1 : 0;
+  const numbers = (prompt.match(/\d+/g) || []).length;
+
+  return {
+    log_words: Math.log(wordCount + 1),
+    question_marks: questionMarks,
+    logic_words: logicWords,
+    constraint_words: constraintWords,
+    multipart: multipart,
+    ambiguity: ambiguity,
+    code_markers: codeMarkers,
+    numbers: numbers
+  };
+}
+
+function predictTokens(prompt, budget) {
+  const f = extractFeatures(prompt);
+  let pred = predictorWeights.bias || 0;
+  for (const key in f) {
+    pred += (predictorWeights[key] || 0) * f[key];
+  }
+  pred = Math.max(20, pred);
+  return Math.min(pred, budget * 1.5);
+}
+
+/* ---------------------------------------------------------------
+   Churn scoring on the thinking trace
+--------------------------------------------------------------- */
+function churnScore(thinkText, thinkTokens) {
+  const pivots = countOccurrences(thinkText, PIVOT_PHRASES);
+  const per100 = thinkTokens > 0 ? (pivots / thinkTokens) * 100 : 0;
+  return { pivots, per100: Math.round(per100 * 10) / 10 };
+}
+
+function highlightPivots(text) {
+  let escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  for (const term of PIVOT_PHRASES) {
+    const re = new RegExp('(' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    escaped = escaped.replace(re, '<mark>$1</mark>');
+  }
+  return escaped;
+}
+
+/* ---------------------------------------------------------------
+   UI wiring
+--------------------------------------------------------------- */
+document.getElementById('budget').addEventListener('input', function() {
+  document.getElementById('budget-val').textContent = Number(this.value).toLocaleString() + ' tokens';
+});
+
+document.getElementById('apply-weights').addEventListener('click', function() {
+  const raw = document.getElementById('weights-input').value.trim();
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    predictorWeights = { ...DEFAULT_WEIGHTS, ...parsed };
+    setStatus('Predictor weights updated.');
+    setTimeout(() => setStatus(''), 1500);
+  } catch (e) {
+    setStatus('Could not parse weights JSON: ' + e.message);
+  }
+});
+
+document.getElementById('reset-weights').addEventListener('click', function() {
+  predictorWeights = { ...DEFAULT_WEIGHTS };
+  document.getElementById('weights-input').value = '';
+  setStatus('Reset to default heuristic weights.');
+  setTimeout(() => setStatus(''), 1500);
+});
+
+function setQ(q) { document.getElementById('prompt').value = q; }
+function setStatus(html) { document.getElementById('status').innerHTML = html; }
+
+document.getElementById('submit-btn').addEventListener('click', run);
+document.getElementById('prompt').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) run();
+});
+
+/* ---------------------------------------------------------------
+   History charts
+--------------------------------------------------------------- */
+const history = [];
+let tokensChart = null;
+let scatterChart = null;
+
+function updateCharts() {
+  document.getElementById('history').style.display = 'block';
+
+  // bar chart: reasoning tokens per query
+  const labels = history.map((h, i) => `Q${i + 1}`);
+  const data   = history.map(h => h.actual);
+  const colors = history.map(h => h.cls.color);
+
+  if (!tokensChart) {
+    tokensChart = new Chart(document.getElementById('chart-tokens'), {
+      type: 'bar',
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 4 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: items => history[items[0].dataIndex].snippet,
+              label: item => `${item.raw.toLocaleString()} reasoning tokens`
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: '#888' }, grid: { display: false } },
+          y: { ticks: { color: '#888' }, grid: { color: 'rgba(128,128,128,0.15)' },
+               title: { display: true, text: 'tokens', color: '#888', font: { size: 11 } } }
+        }
+      }
+    });
+  } else {
+    tokensChart.data.labels = labels;
+    tokensChart.data.datasets[0].data = data;
+    tokensChart.data.datasets[0].backgroundColor = colors;
+    tokensChart.update();
+  }
+
+  // scatter: predicted vs actual, flag deceptive-simplicity points
+  const points = history.map(h => ({ x: h.predicted, y: h.actual, snippet: h.snippet, deceptive: h.deceptive }));
+  const normalColor = '#378ADD';
+  const deceptiveColor = '#E24B4A';
+  const maxAxis = Math.max(...points.map(p => Math.max(p.x, p.y)), 500) * 1.1;
+
+  if (!scatterChart) {
+    scatterChart = new Chart(document.getElementById('chart-scatter'), {
+      type: 'scatter',
+      data: {
+        datasets: [
+          {
+            label: 'queries',
+            data: points,
+            backgroundColor: points.map(p => p.deceptive ? deceptiveColor : normalColor),
+            pointRadius: points.map(p => p.deceptive ? 7 : 5),
+            pointStyle: points.map(p => p.deceptive ? 'triangle' : 'circle'),
+          },
+          {
+            label: 'predicted = actual',
+            type: 'line',
+            data: [{ x: 0, y: 0 }, { x: maxAxis, y: maxAxis }],
+            borderColor: 'rgba(128,128,128,0.4)',
+            borderDash: [4, 4],
+            pointRadius: 0,
+            fill: false,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: item => {
+                if (item.datasetIndex === 1) return null;
+                const p = points[item.dataIndex];
+                return `${p.snippet} — predicted ${Math.round(p.x)}, actual ${Math.round(p.y)}` + (p.deceptive ? ' (deceptively hard!)' : '');
+              }
+            }
+          }
+        },
+        scales: {
+          x: { min: 0, max: maxAxis, ticks: { color: '#888' }, grid: { color: 'rgba(128,128,128,0.1)' },
+               title: { display: true, text: 'predicted tokens', color: '#888', font: { size: 11 } } },
+          y: { min: 0, max: maxAxis, ticks: { color: '#888' }, grid: { color: 'rgba(128,128,128,0.1)' },
+               title: { display: true, text: 'actual tokens', color: '#888', font: { size: 11 } } }
+        }
+      }
+    });
+  } else {
+    scatterChart.data.datasets[0].data = points;
+    scatterChart.data.datasets[0].backgroundColor = points.map(p => p.deceptive ? deceptiveColor : normalColor);
+    scatterChart.data.datasets[0].pointRadius = points.map(p => p.deceptive ? 7 : 5);
+    scatterChart.data.datasets[0].pointStyle = points.map(p => p.deceptive ? 'triangle' : 'circle');
+    scatterChart.data.datasets[1].data = [{ x: 0, y: 0 }, { x: maxAxis, y: maxAxis }];
+    scatterChart.options.scales.x.max = maxAxis;
+    scatterChart.options.scales.y.max = maxAxis;
+    scatterChart.update();
+  }
+}
+
+/* ---------------------------------------------------------------
+   Streaming bar updates
+--------------------------------------------------------------- */
+function setupBar(predicted, budget) {
+  document.getElementById('bar-predicted-label').textContent = `predicted: ${Math.round(predicted).toLocaleString()} tokens`;
+  document.getElementById('bar-actual-label').textContent = 'actual: 0 tokens';
+
+  const markerPos = Math.min(100, (predicted / budget) * 100);
+  const marker = document.getElementById('bar-marker');
+  const markerLabel = document.getElementById('bar-marker-label');
+  marker.style.left = markerPos + '%';
+  markerLabel.style.left = markerPos + '%';
+  markerLabel.textContent = 'predicted';
+
+  const fill = document.getElementById('bar-fill');
+  fill.style.width = '0%';
+  fill.style.background = 'var(--green)';
+  document.getElementById('bar-pct-label').textContent = '0%';
+}
+
+function updateBarLive(actual, predicted, budget) {
+  document.getElementById('bar-actual-label').textContent = `actual: ${Math.round(actual).toLocaleString()} tokens`;
+
+  const fill = document.getElementById('bar-fill');
+  // scale: 100% of the bar = predicted amount, unless actual exceeds predicted (overtime)
+  const ref = Math.max(predicted, 1);
+  const pct = Math.min(150, (actual / ref) * 100);
+  const displayPct = Math.min(100, pct);
+  fill.style.width = displayPct + '%';
+
+  if (actual <= predicted) {
+    fill.style.background = 'var(--green)';
+    document.getElementById('bar-pct-label').textContent = Math.round(pct) + '% of predicted';
+  } else {
+    const overtimePct = Math.round(((actual - predicted) / ref) * 100);
+    fill.style.background = 'var(--red)';
+    document.getElementById('bar-pct-label').textContent = `+${overtimePct}% over predicted`;
+  }
+}
+
+/* ---------------------------------------------------------------
+   Main run() — streaming
+--------------------------------------------------------------- */
+async function run() {
+  const apiKey = document.getElementById('api-key').value.trim();
+  const prompt = document.getElementById('prompt').value.trim();
+  const budget = parseInt(document.getElementById('budget').value);
+
+  if (!apiKey) { setStatus('Paste your Anthropic API key above.'); return; }
+  if (!prompt) { setStatus('Enter a prompt.'); return; }
+
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  document.getElementById('result').style.display = 'block';
+  document.getElementById('deceptive-flag-wrap').innerHTML = '';
+  setStatus('<span class="dot"></span><span class="dot"></span><span class="dot"></span>');
+
+  // --- Pre-inference prediction ---
+  const predicted = predictTokens(prompt, budget);
+  setupBar(predicted, budget);
+  document.getElementById('badge-row').innerHTML =
+    `<span class="badge" style="background:#E6F1FB;color:#0C447C">predicted: ${Math.round(predicted).toLocaleString()} tok</span>`;
+  document.getElementById('m-think').textContent = '—';
+  document.getElementById('m-out').textContent = '—';
+  document.getElementById('m-ratio').textContent = '—';
+  document.getElementById('m-class').textContent = '—';
+  document.getElementById('m-churn').textContent = '—';
+  document.getElementById('m-error').textContent = '—';
+  document.getElementById('trace').innerHTML = '';
+  document.getElementById('answer').textContent = '';
+
+  let thinkText = '';
+  let answerText = '';
+  let currentBlockType = null;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-calls': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: budget + 4000,
+        stream: true,
+        thinking: { type: 'enabled', budget_tokens: budget },
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error?.message || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    setStatus('');
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const events = buffer.split('\n\n');
+      buffer = events.pop(); // keep incomplete event
+
+      for (const evt of events) {
+        const lines = evt.split('\n');
+        let eventType = null;
+        let data = null;
+        for (const line of lines) {
+          if (line.startsWith('event:')) eventType = line.slice(6).trim();
+          if (line.startsWith('data:')) data = line.slice(5).trim();
+        }
+        if (!data) continue;
+        let parsed;
+        try { parsed = JSON.parse(data); } catch (e) { continue; }
+
+        if (eventType === 'content_block_start') {
+          currentBlockType = parsed.content_block?.type;
+        } else if (eventType === 'content_block_delta') {
+          const delta = parsed.delta;
+          if (delta?.type === 'thinking_delta') {
+            thinkText += delta.thinking;
+            const thinkTokensLive = Math.round(thinkText.split(/\s+/).filter(Boolean).length * 1.3);
+            updateBarLive(thinkTokensLive, predicted, budget);
+            document.getElementById('m-think').textContent = thinkTokensLive.toLocaleString();
+            const cls = classify(thinkTokensLive);
+            document.getElementById('m-class').textContent = cls.label;
+          } else if (delta?.type === 'text_delta') {
+            answerText += delta.text;
+            document.getElementById('answer').textContent = answerText;
+            const outTokensLive = Math.round(answerText.split(/\s+/).filter(Boolean).length * 1.3);
+            document.getElementById('m-out').textContent = outTokensLive.toLocaleString();
+          }
+        } else if (eventType === 'content_block_stop') {
+          currentBlockType = null;
+        }
+      }
+    }
+
+    // --- Finalize ---
+    const thinkTokens  = Math.round(thinkText.split(/\s+/).filter(Boolean).length * 1.3);
+    const outputTokens = Math.round(answerText.split(/\s+/).filter(Boolean).length * 1.3);
+    const ratio = outputTokens > 0 ? (thinkTokens / outputTokens).toFixed(1) : '∞';
+    const cls = classify(thinkTokens);
+    const churn = churnScore(thinkText, thinkTokens);
+    const error = thinkTokens - predicted;
+    const errorPct = predicted > 0 ? Math.round((error / predicted) * 100) : 0;
+
+    updateBarLive(thinkTokens, predicted, budget);
+
+    document.getElementById('badge-row').innerHTML = `
+      <span class="badge" style="background:${cls.bg};color:${cls.color}">${cls.label}</span>
+      <span class="badge" style="background:#E6F1FB;color:#0C447C">predicted: ${Math.round(predicted).toLocaleString()} tok</span>
+    `;
+
+    document.getElementById('m-think').textContent = thinkTokens.toLocaleString();
+    document.getElementById('m-out').textContent = outputTokens.toLocaleString();
+    document.getElementById('m-ratio').textContent = ratio + 'x';
+    document.getElementById('m-class').textContent = cls.label;
+    document.getElementById('m-churn').textContent = churn.per100 + ' (' + churn.pivots + ')';
+    document.getElementById('m-error').textContent = (error >= 0 ? '+' : '') + errorPct + '%';
+
+    document.getElementById('trace').innerHTML = thinkText
+      ? highlightPivots(thinkText)
+      : '(no thinking trace)';
+
+    // deceptive-simplicity flag: predicted low, actual far higher
+    const deceptive = predicted < 250 && thinkTokens > predicted * 3 && thinkTokens > 600;
+    if (deceptive) {
+      document.getElementById('deceptive-flag-wrap').innerHTML =
+        `<div class="deceptive-flag">⚠ deceptively hard — predicted ${Math.round(predicted)} tokens, model used ${thinkTokens.toLocaleString()}</div>`;
+    }
+
+    history.push({
+      snippet: prompt.slice(0, 35) + (prompt.length > 35 ? '…' : ''),
+      predicted, actual: thinkTokens, cls, deceptive
+    });
+    updateCharts();
+
+  } catch (err) {
+    setStatus('Error: ' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
