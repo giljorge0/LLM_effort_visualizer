@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Effort Visualizer — Findings</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f9f9f8; --surface: #ffffff; --surface2: #f1f0ea;
+  --border: rgba(0,0,0,0.1); --text: #1a1a18; --text2: #6b6b66; --text3: #9b9b95;
+  --radius: 8px; --radius-lg: 12px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", "Fira Mono", monospace;
+  --trivial: #1D9E75; --simple: #3B8C1A; --moderate: #BA7517;
+  --deceptive: #7B3FBE; --hard: #D85A30;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413; --surface: #1e1e1c; --surface2: #272724;
+    --border: rgba(255,255,255,0.08); --text: #e8e8e2; --text2: #9b9b95; --text3: #6b6b66;
+  }
+}
+body {
+  background: var(--bg); color: var(--text);
+  font-family: var(--font); font-size: 15px; line-height: 1.65;
+  padding: 3rem 1rem 6rem;
+}
+.container { max-width: 860px; margin: 0 auto; }
+
+.header { margin-bottom: 3rem; }
+.header h1 { font-size: 26px; font-weight: 600; margin-bottom: 6px; }
+.header p { color: var(--text2); font-size: 14px; max-width: 620px; }
+.header .meta { margin-top: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 99px; font-size: 12px;
+  background: var(--surface2); color: var(--text2);
+}
+.pill b { color: var(--text); }
+
+.section { margin-bottom: 3rem; }
+.section-title {
+  font-size: 13px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text3); margin-bottom: 1rem;
+  padding-bottom: 8px; border-bottom: 0.5px solid var(--border);
+}
+.finding {
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg); padding: 1.25rem 1.5rem; margin-bottom: 1rem;
+}
+.finding-title { font-size: 16px; font-weight: 500; margin-bottom: 6px; }
+.finding-body { font-size: 14px; color: var(--text2); line-height: 1.7; }
+.finding-body strong { color: var(--text); }
+.r2-callout {
+  display: inline-block; font-size: 28px; font-weight: 600;
+  color: var(--hard); margin: 8px 0 4px;
+}
+
+.chart-wrap { position: relative; width: 100%; }
+.chart-wrap canvas { width: 100% !important; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg); padding: 1.25rem 1.5rem;
+}
+.card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text3); margin-bottom: 8px; }
+.card-value { font-size: 32px; font-weight: 600; }
+.card-sub { font-size: 13px; color: var(--text2); margin-top: 4px; }
+
+/* table */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th {
+  text-align: left; padding: 8px 10px; color: var(--text3);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 0.5px solid var(--border); font-weight: 500;
+}
+.data-table td { padding: 8px 10px; border-bottom: 0.5px solid var(--border); vertical-align: top; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--surface2); }
+.cat-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 99px;
+  font-size: 11px; white-space: nowrap;
+}
+.tps-bar-wrap { display: flex; align-items: center; gap: 6px; }
+.tps-bar { height: 6px; border-radius: 3px; min-width: 2px; }
+.mono { font-family: var(--mono); }
+.flag { color: var(--deceptive); font-size: 12px; }
+
+.insight-box {
+  background: var(--surface2); border-radius: var(--radius);
+  padding: 1rem 1.25rem; font-size: 13px; color: var(--text2);
+  border-left: 3px solid var(--border); margin-top: 1rem;
+}
+.insight-box strong { color: var(--text); }
+
+.tab-row { display: flex; gap: 6px; margin-bottom: 1rem; flex-wrap: wrap; }
+.tab {
+  padding: 5px 14px; border-radius: 99px; font-size: 13px;
+  cursor: pointer; background: var(--surface2); border: 0.5px solid var(--border);
+  color: var(--text2); transition: all 0.15s;
+}
+.tab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>LLM Effort Visualizer — Dataset Findings</h1>
+    <p>53 prompts across 5 difficulty tiers, run through Mistral 7B via Ollama with max_tokens=256.
+    The goal: can surface prompt features predict inference effort? The answer is illuminating.</p>
+    <div class="meta">
+      <span class="pill">model: <b>mistral:latest</b></span>
+      <span class="pill">n: <b>53 prompts</b></span>
+      <span class="pill">max_tokens: <b>256</b></span>
+      <span class="pill">hardware: <b>local CPU/GPU</b></span>
+    </div>
+  </div>
+
+  <!-- FINDING 1 -->
+  <div class="section">
+    <div class="section-title">Finding 1 — The Predictor</div>
+    <div class="finding">
+      <div class="finding-title">Surface prompt features cannot predict generation time</div>
+      <div class="finding-body">
+        <div class="r2-callout">R² = −1.51</div>
+        <p>A Ridge regression over 8 prompt features (word count, logic words, constraint words, question marks, etc.)
+        fitted to generation time achieves a <strong>cross-validated R² of −1.51</strong> — substantially worse than simply
+        predicting the mean every time. The model learned nothing useful from the prompt surface.</p>
+        <div class="insight-box" style="margin-top:1rem;">
+          <strong>Why?</strong> The dominant driver of generation time is output token count, which in this run
+          is almost entirely determined by the 256-token cap — not by prompt complexity. Once you control for
+          output tokens (r²=0.84 between output tokens and gen_ms), the residual variance isn't explained
+          by anything visible in the prompt text.
+        </div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <div class="card-label">output tokens → gen_ms correlation</div>
+        <div class="card-value" style="color: var(--simple)">r² = 0.84</div>
+        <div class="card-sub">Output length almost entirely explains generation time — that's just hardware</div>
+      </div>
+      <div class="card">
+        <div class="card-label">prompts hitting the 256-token cap</div>
+        <div class="card-value" style="color: var(--moderate)">57%</div>
+        <div class="card-sub">30 of 53 prompts maxed out — truncating the real signal</div>
+      </div>
+    </div>
+    <div class="insight-box" style="margin-top:1rem;">
+      <strong>Implication:</strong> To fix the predictor, you need either (a) a higher or no token cap so output length
+      varies freely with problem complexity, or (b) a different target variable. Tokens/sec is a better candidate — see Finding 2.
+    </div>
+  </div>
+
+  <!-- FINDING 2 -->
+  <div class="section">
+    <div class="section-title">Finding 2 — The Counterintuitive Signal</div>
+    <div class="finding">
+      <div class="finding-title">Harder prompts make the model run <em>faster</em></div>
+      <div class="finding-body">
+        <p>Tokens per second — a real hardware-level inference signal — trends <strong>upward with difficulty</strong>.
+        Trivial prompts average 4.24 t/s; hard prompts average 5.61 t/s.
+        This is counterintuitive and reproducible across the dataset.</p>
+        <div class="chart-wrap" style="height:200px; margin-top:1rem;">
+          <canvas id="tps-chart" role="img" aria-label="Tokens per second by difficulty tier"></canvas>
+        </div>
+        <div class="insight-box" style="margin-top:1rem;">
+          <strong>Hypothesis:</strong> Hard prompts (math, CS theory, well-defined technical questions) fall into
+          well-worn token sequences the model has seen many times during training. The KV-cache warms up faster,
+          attention patterns are sparser, and the model produces fluent output quickly. Creative and narrative prompts
+          (the slowest: "Write a short story" at 3.12 t/s) require the model to sample in a more diffuse,
+          high-entropy space — many plausible continuations, slower selection.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FINDING 3 -->
+  <div class="section">
+    <div class="section-title">Finding 3 — The Token Cap Confound</div>
+    <div class="finding">
+      <div class="finding-title">Generation time clusters into two regimes separated by the cap</div>
+      <div class="finding-body">
+        <p>The dataset splits cleanly into prompts answered in <strong>&lt;256 tokens</strong> (short, discrete answers)
+        and those that hit the cap (open-ended questions the model could answer indefinitely).
+        Within the capped group, generation time ranges from 41–82 seconds — driven almost entirely by t/s variance,
+        not by "more thinking."</p>
+        <div class="chart-wrap" style="height:240px; margin-top:1rem;">
+          <canvas id="scatter-chart" role="img" aria-label="Scatter plot of output tokens vs generation time, showing the 256-token cap clustering"></canvas>
+        </div>
+        <div class="insight-box" style="margin-top:1rem;">
+          <strong>Fix:</strong> Re-run with <code>--max-tokens 2048</code> and open-ended prompts that actually differ
+          in answer depth. The variance you want (complex question → more tokens → longer time) will only appear
+          when the cap isn't the binding constraint.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FINDING 4 — churn -->
+  <div class="section">
+    <div class="section-title">Finding 4 — Cognitive Churn</div>
+    <div class="finding">
+      <div class="finding-title">Mistral barely backtracks — churn is nearly zero everywhere</div>
+      <div class="finding-body">
+        <p>Only 2 of 53 prompts produced any backtracking language in the output.
+        Both are <strong>deceptive-simple</strong> prompts (the hotel room paradox and the quantum entanglement explanation).
+        The churn score — pivot phrases per 100 output tokens — peaks at 0.5 across the entire dataset.</p>
+        <div class="grid2" style="margin-top:1rem;">
+          <div class="card">
+            <div class="card-label">hotel room paradox</div>
+            <div class="card-value" style="font-size:20px; color: var(--deceptive)">0.5 pivots/100 tok</div>
+            <div class="card-sub" style="font-family: var(--mono); font-size:12px; margin-top:8px; color: var(--text2)">
+              "there seems to be a misunderstanding or error in the calculations"
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">quantum entanglement</div>
+            <div class="card-value" style="font-size:20px; color: var(--deceptive)">0.4 pivots/100 tok</div>
+            <div class="card-sub" style="font-family: var(--mono); font-size:12px; margin-top:8px; color: var(--text2)">
+              "actually" — caught mid-explanation, self-corrected
+            </div>
+          </div>
+        </div>
+        <div class="insight-box" style="margin-top:1rem;">
+          <strong>Why so flat?</strong> Mistral 7B at 256 tokens rarely has room to backtrack — it answers and stops.
+          Churn as a signal requires a model that (a) has a thinking trace separate from output, or (b) is given
+          enough tokens to reconsider. Claude with extended thinking showed meaningful churn variance across difficulty.
+          For Ollama, churn would need a much higher token budget and/or a model that's more self-critical.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FULL DATA TABLE -->
+  <div class="section">
+    <div class="section-title">Full Dataset</div>
+    <div class="tab-row" id="filter-tabs">
+      <div class="tab active" data-filter="all">all (53)</div>
+      <div class="tab" data-filter="trivial">trivial</div>
+      <div class="tab" data-filter="simple">simple</div>
+      <div class="tab" data-filter="moderate">moderate</div>
+      <div class="tab" data-filter="deceptive">deceptive</div>
+      <div class="tab" data-filter="hard">hard</div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="data-table" id="data-table">
+        <thead>
+          <tr>
+            <th>prompt</th>
+            <th>cat</th>
+            <th>gen_ms</th>
+            <th>tokens</th>
+            <th>t/s</th>
+            <th>churn</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- NEXT STEPS -->
+  <div class="section">
+    <div class="section-title">What to do next</div>
+    <div class="finding">
+      <div class="finding-body">
+        <p style="margin-bottom:1rem;">Three concrete changes that would make the predictor actually work:</p>
+        <p><strong>1. Remove the token cap.</strong> Re-run with <code>--max-tokens 2048</code> or higher.
+        Let output length be free — then complexity genuinely drives time.</p>
+        <p style="margin-top:0.75rem;"><strong>2. Use t/s as the target, not gen_ms.</strong>
+        Tokens per second already shows the counterintuitive difficulty signal. Train the regressor on t/s
+        and you're predicting something real about inference dynamics rather than wall clock time dominated by output length.</p>
+        <p style="margin-top:0.75rem;"><strong>3. Switch to a reasoning model.</strong>
+        Pull <code>deepseek-r1:7b</code> or <code>qwen3:8b</code> from Ollama — both expose thinking traces in
+        <code>&lt;think&gt;</code> tags. Then you get reasoning tokens as a real ground-truth signal,
+        the same way the Anthropic version used extended thinking. That's the signal the predictor actually needs.</p>
+        <div class="insight-box" style="margin-top:1rem;">
+          <strong>The core finding stands:</strong> prompt surface features don't straightforwardly predict
+          inference effort, and that's interesting. The question of what does predict it — and whether any
+          pre-inference classifier can beat the mean — is still open.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const DATA = [{"prompt":"What is the capital of France?","category":"trivial-factual","gen_ms":1341,"eval_count":8,"tps":5.97,"churn":0.0,"pivots":0,"snippet":" The capital of France is Paris."},{"prompt":"What year did World War II end?","category":"trivial-factual","gen_ms":39714,"eval_count":153,"tps":3.85,"churn":0.0,"pivots":0,"snippet":" World War II officially ended on September 2, 1945, when Japan signed the unconditional surrender aboard the U.S. battl"},{"prompt":"What is the chemical symbol for gold?","category":"trivial-factual","gen_ms":6852,"eval_count":22,"tps":3.21,"churn":0.0,"pivots":0,"snippet":" The chemical symbol for gold is Au, which comes from the Latin word for gold, \"aurum.\""},{"prompt":"How many continents are there?","category":"trivial-factual","gen_ms":7993,"eval_count":34,"tps":4.25,"churn":0.0,"pivots":0,"snippet":" There are seven continents on Earth: Africa, Antarctica, Asia, Europe, North America, Australia (or Oceania), and South"},{"prompt":"What is the boiling point of water in Celsius?","category":"trivial-factual","gen_ms":31066,"eval_count":133,"tps":4.28,"churn":0.0,"pivots":0,"snippet":" The boiling point of water under standard atmospheric conditions (101.325 kPa and 0 degrees Celsius) is 100 degrees Cel"},{"prompt":"Name the largest planet in our solar system.","category":"trivial-factual","gen_ms":24167,"eval_count":81,"tps":3.35,"churn":0.0,"pivots":0,"snippet":" The largest planet in our solar system is Jupiter."},{"prompt":"What is 12 times 8?","category":"trivial-math","gen_ms":4232,"eval_count":15,"tps":3.54,"churn":0.0,"pivots":0,"snippet":" The product of 12 and 8 is 96."},{"prompt":"Convert 100 Fahrenheit to Celsius.","category":"trivial-math","gen_ms":23776,"eval_count":84,"tps":3.53,"churn":0.0,"pivots":0,"snippet":" To convert Fahrenheit to Celsius, use the formula: C = (F - 32) * 5/9"},{"prompt":"Write a haiku about autumn leaves.","category":"simple-creative","gen_ms":5391,"eval_count":26,"tps":4.82,"churn":0.0,"pivots":0,"snippet":" Golden hues descend, Whispers of summer's end dance, Autumn leaves twirl."},{"prompt":"Write a two-sentence summary of what photosynthesis is.","category":"simple-explain","gen_ms":28711,"eval_count":90,"tps":3.13,"churn":0.0,"pivots":0,"snippet":" Photosynthesis is a biological process used by plants, algae, and some bacteria..."},{"prompt":"List three benefits of regular exercise.","category":"simple-list","gen_ms":42846,"eval_count":170,"tps":3.97,"churn":0.0,"pivots":0,"snippet":" 1. Improved Physical Health..."},{"prompt":"What's a good name for a coffee shop?","category":"simple-creative","gen_ms":35431,"eval_count":139,"tps":3.92,"churn":0.0,"pivots":0,"snippet":" Choosing a name for a coffee shop can be an exciting process!"},{"prompt":"Explain how a refrigerator keeps food cold.","category":"simple-explain","gen_ms":63937,"eval_count":256,"tps":4.0,"churn":0.0,"pivots":0,"snippet":" A refrigerator keeps food cold by using the principle of thermodynamics..."},{"prompt":"Give me a simple recipe for scrambled eggs.","category":"simple-howto","gen_ms":59571,"eval_count":256,"tps":4.3,"churn":0.0,"pivots":0,"snippet":" Title: Basic Scrambled Eggs Recipe"},{"prompt":"What's the difference between a virus and a bacterium?","category":"moderate-explain","gen_ms":56557,"eval_count":256,"tps":4.53,"churn":0.0,"pivots":0,"snippet":" Viruses and bacteria are both microscopic organisms..."},{"prompt":"Explain how transformers work in neural networks.","category":"moderate-explain","gen_ms":52193,"eval_count":256,"tps":4.9,"churn":0.0,"pivots":0,"snippet":" Transformers are a type of model architecture used in NLP..."},{"prompt":"Compare the economic policies of supply-side and demand-side economics.","category":"moderate-compare","gen_ms":55491,"eval_count":256,"tps":4.61,"churn":0.0,"pivots":0,"snippet":" Supply-side and demand-side economics are two different approaches..."},{"prompt":"Why does the sky appear blue during the day and red at sunset?","category":"moderate-explain","gen_ms":58648,"eval_count":256,"tps":4.37,"churn":0.0,"pivots":0,"snippet":" The appearance of the sky during the day as blue and at sunset as red is due to Rayleigh scattering."},{"prompt":"Write a short story about a robot who discovers music for the first time.","category":"moderate-creative","gen_ms":82160,"eval_count":256,"tps":3.12,"churn":0.0,"pivots":0,"snippet":" Title: Harmonious Awakening"},{"prompt":"Explain the difference between TCP and UDP, including when you'd use each.","category":"moderate-technical","gen_ms":54690,"eval_count":256,"tps":4.68,"churn":0.0,"pivots":0,"snippet":" TCP and UDP are two main transport-layer protocols..."},{"prompt":"A train leaves station A at 60 mph heading toward station B, 300 miles away...","category":"moderate-math","gen_ms":48060,"eval_count":225,"tps":4.68,"churn":0.0,"pivots":0,"snippet":" To find out when the two trains will meet..."},{"prompt":"Write a Python function that checks if a string is a palindrome...","category":"moderate-code","gen_ms":55393,"eval_count":256,"tps":4.62,"churn":0.0,"pivots":0,"snippet":" Here's a Python function that checks if a given string is a palindrome..."},{"prompt":"What are the main arguments for and against universal basic income?","category":"moderate-argument","gen_ms":51715,"eval_count":256,"tps":4.95,"churn":0.0,"pivots":0,"snippet":" Universal Basic Income (UBI) is a policy proposal..."},{"prompt":"Explain the trolley problem and discuss what it reveals about moral intuitions.","category":"moderate-philosophy","gen_ms":55209,"eval_count":256,"tps":4.64,"churn":0.0,"pivots":0,"snippet":" The Trolley Problem is a thought experiment in philosophy..."},{"prompt":"A farmer has 17 sheep. All but 9 die. How many are left?...","category":"deceptive-simple","gen_ms":37436,"eval_count":179,"tps":4.78,"churn":0.0,"pivots":0,"snippet":" This question is an example of a semantic trick question."},{"prompt":"If a bat and ball together cost $1.10, and the bat costs $1.00 more than the ball...","category":"deceptive-simple","gen_ms":38415,"eval_count":180,"tps":4.69,"churn":0.0,"pivots":0,"snippet":" This question can be tricky because it's designed to mislead you..."},{"prompt":"How many words are in your response to this exact prompt?","category":"deceptive-simple","gen_ms":3145,"eval_count":17,"tps":5.41,"churn":0.0,"pivots":0,"snippet":" The number of words in my response to this exact prompt is 18."},{"prompt":"I'm thinking of a number. It's even, greater than 10, less than 20, and not divisible by 4...","category":"deceptive-simple","gen_ms":12438,"eval_count":63,"tps":5.07,"churn":0.0,"pivots":0,"snippet":" The only even number between 11 and 19 that is not divisible by 4 is 16."},{"prompt":"Three people check into a hotel room that costs $30...","category":"deceptive-simple","gen_ms":45633,"eval_count":219,"tps":4.8,"churn":0.5,"pivots":1,"snippet":" In this scenario, there seems to be a misunderstanding or error in the calculations."},{"prompt":"Is P equal to NP? Argue both sides.","category":"hard-theory","gen_ms":45721,"eval_count":256,"tps":5.6,"churn":0.0,"pivots":0,"snippet":" The question of whether P equals NP is one of the most significant problems in computer science."},{"prompt":"Design a database schema for a multi-tenant SaaS application...","category":"hard-design","gen_ms":42622,"eval_count":256,"tps":6.01,"churn":0.0,"pivots":0,"snippet":" For a multi-tenant SaaS application, I will design a relational database schema..."},{"prompt":"Prove that the square root of 2 is irrational.","category":"hard-math","gen_ms":43264,"eval_count":256,"tps":5.92,"churn":0.0,"pivots":0,"snippet":" The proof that the square root of 2 is irrational is based on contradiction."},{"prompt":"Derive the time complexity of merge sort and explain why it is optimal...","category":"hard-cs","gen_ms":46004,"eval_count":256,"tps":5.56,"churn":0.0,"pivots":0,"snippet":" Merge sort is a divide-and-conquer algorithm..."},{"prompt":"A jar contains red, blue, and green marbles in the ratio 3:5:7...","category":"hard-math","gen_ms":42351,"eval_count":256,"tps":6.04,"churn":0.0,"pivots":0,"snippet":" Let's break down the problem into two parts..."},{"prompt":"Explain how garbage collection works in a generational garbage collector...","category":"hard-technical","gen_ms":41813,"eval_count":256,"tps":6.12,"churn":0.0,"pivots":0,"snippet":" A Generational Garbage Collector (GC) is a strategy used by modern programming languages..."},{"prompt":"You must design an algorithm that finds the median of two sorted arrays in O(log(min(m,n))) time...","category":"hard-algorithm","gen_ms":47717,"eval_count":256,"tps":5.36,"churn":0.0,"pivots":0,"snippet":" To design an algorithm that finds the median of two sorted arrays..."},{"prompt":"Critically analyze the trolley problem, the violinist argument, and the experience machine...","category":"hard-philosophy","gen_ms":47360,"eval_count":256,"tps":5.41,"churn":0.0,"pivots":0,"snippet":" The trolley problem, the violinist argument, and the experience machine thought experiment..."},{"prompt":"Explain quantum entanglement to a high schooler, then explain why it does not allow FTL communication...","category":"hard-physics","gen_ms":48517,"eval_count":256,"tps":5.28,"churn":0.4,"pivots":1,"snippet":" Quantum Entanglement is a fascinating concept in quantum physics!"},{"prompt":"Write a regex that matches valid IPv4 addresses, but reject addresses with leading zeros...","category":"hard-regex","gen_ms":42767,"eval_count":256,"tps":5.99,"churn":0.0,"pivots":0,"snippet":" To create a regular expression for matching valid IPv4 addresses..."},{"prompt":"Two trains start at opposite ends of a 100-mile track... fly problem... solve two ways.","category":"hard-math","gen_ms":51695,"eval_count":256,"tps":4.95,"churn":0.0,"pivots":0,"snippet":" Solution 1 (Direct Calculation)..."},{"prompt":"Explain the CAP theorem and why it implies no distributed database can be simultaneously CAP...","category":"hard-distributed-systems","gen_ms":44637,"eval_count":256,"tps":5.74,"churn":0.0,"pivots":0,"snippet":" The CAP Theorem, proposed by Eric Brewer in 2000..."},{"prompt":"Suppose you have 12 coins, one counterfeit. Balance scale only 3 times...","category":"hard-puzzle","gen_ms":47822,"eval_count":256,"tps":5.35,"churn":0.0,"pivots":0,"snippet":" Here's a step-by-step strategy using a balance scale..."},{"prompt":"Write a tweet about coffee.","category":"trivial-creative","gen_ms":12603,"eval_count":58,"tps":4.6,"churn":0.0,"pivots":0,"snippet":" Waking up to the aroma of freshly brewed coffee..."},{"prompt":"What does 'ubiquitous' mean?","category":"trivial-factual","gen_ms":10721,"eval_count":62,"tps":5.78,"churn":0.0,"pivots":0,"snippet":" The word 'ubiquitous' means present, appearing, or found everywhere."},{"prompt":"Translate 'good morning' into Spanish, French, and Japanese.","category":"simple-language","gen_ms":14904,"eval_count":89,"tps":5.97,"churn":0.0,"pivots":0,"snippet":" In Spanish, 'buenos días' means good morning."},{"prompt":"Explain the difference between a stack and a queue, with an example use case for each.","category":"moderate-technical","gen_ms":42447,"eval_count":256,"tps":6.03,"churn":0.0,"pivots":0,"snippet":" A Stack and a Queue are both abstract data types..."},{"prompt":"What's the plot of Romeo and Juliet in one paragraph?","category":"simple-summary","gen_ms":34261,"eval_count":213,"tps":6.22,"churn":0.0,"pivots":0,"snippet":" Romeo and Juliet is a classic tragic love story by William Shakespeare..."},{"prompt":"Given the function f(x) = x^3 - 6x^2 + 9x, find all critical points...","category":"moderate-math","gen_ms":43896,"eval_count":256,"tps":5.83,"churn":0.0,"pivots":0,"snippet":" To find the critical points of the function f(x) = x^3 - 6x^2 + 9x..."},{"prompt":"Explain why correlation does not imply causation, using ice cream sales and drowning rates.","category":"moderate-explain","gen_ms":44930,"eval_count":256,"tps":5.7,"churn":0.0,"pivots":0,"snippet":" Correlation does not necessarily imply causation..."},{"prompt":"What's a polite way to decline a meeting invitation?","category":"simple-communication","gen_ms":32741,"eval_count":197,"tps":6.02,"churn":0.0,"pivots":0,"snippet":" A polite and professional way to decline a meeting invitation..."},{"prompt":"Three people check into a hotel room that costs $30...","category":"deceptive-simple","gen_ms":45633,"eval_count":219,"tps":4.8,"churn":0.5,"pivots":1,"snippet":" In this scenario, there seems to be a misunderstanding..."},{"prompt":"Explain the difference between supervised, unsupervised, and reinforcement learning...","category":"moderate-explain","gen_ms":42686,"eval_count":256,"tps":6.0,"churn":0.0,"pivots":0,"snippet":" 1. Supervised Learning: In supervised learning, the algorithm learns from a labeled dataset."},{"prompt":"Outline a study plan for learning calculus from scratch over 12 weeks...","category":"moderate-planning","gen_ms":42844,"eval_count":256,"tps":5.98,"churn":0.0,"pivots":0,"snippet":" Title: 12-Week Calculus Study Plan"},{"prompt":"A 2x2 matrix A has eigenvalues 2 and 3. Construct and verify a specific matrix A.","category":"hard-math","gen_ms":49769,"eval_count":256,"tps":5.14,"churn":0.0,"pivots":0,"snippet":" First, let's find the determinant and trace of matrix A based on the given eigenvalues."}];
+
+/* ---- category config ---- */
+const CAT_COLOR = {
+  trivial: '#1D9E75', simple: '#3B8C1A', moderate: '#BA7517',
+  deceptive: '#7B3FBE', hard: '#D85A30'
+};
+const CAT_BG = {
+  trivial: '#E1F5EE', simple: '#EAF3DE', moderate: '#FAEEDA',
+  deceptive: '#F0E8FB', hard: '#FAECE7'
+};
+function tier(cat) { return cat.split('-')[0]; }
+
+/* ---- TPS by tier bar chart ---- */
+(function() {
+  const groups = {};
+  DATA.forEach(d => {
+    const t = tier(d.category);
+    if (!groups[t]) groups[t] = [];
+    groups[t].push(d.tps);
+  });
+  const order = ['trivial','simple','moderate','deceptive','hard'];
+  const means = order.map(t => {
+    const vals = groups[t] || [];
+    return +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2);
+  });
+  new Chart(document.getElementById('tps-chart'), {
+    type: 'bar',
+    data: {
+      labels: order,
+      datasets: [{
+        data: means,
+        backgroundColor: order.map(t => CAT_COLOR[t]),
+        borderRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: i => `${i.raw} tokens/sec avg` } }
+      },
+      scales: {
+        x: { ticks: { color: '#888' }, grid: { display: false } },
+        y: {
+          min: 3.5, max: 6.5,
+          ticks: { color: '#888' }, grid: { color: 'rgba(128,128,128,0.12)' },
+          title: { display: true, text: 'tokens/sec', color: '#888', font: { size: 11 } }
+        }
+      }
+    }
+  });
+})();
+
+/* ---- scatter: output tokens vs gen_ms ---- */
+(function() {
+  const pts = DATA.map(d => ({
+    x: d.eval_count, y: d.gen_ms,
+    cat: tier(d.category), label: d.prompt.slice(0,50)
+  }));
+  new Chart(document.getElementById('scatter-chart'), {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        data: pts,
+        backgroundColor: pts.map(p => CAT_COLOR[p.cat] + 'cc'),
+        pointRadius: 5,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: i => `${pts[i.dataIndex].label} — ${i.raw.x} tok, ${(i.raw.y/1000).toFixed(1)}s`
+        }}
+      },
+      scales: {
+        x: { min: 0, max: 280, ticks: { color: '#888' }, grid: { color: 'rgba(128,128,128,0.1)' },
+             title: { display: true, text: 'output tokens', color: '#888', font: { size: 11 } } },
+        y: { ticks: { color: '#888', callback: v => (v/1000).toFixed(0)+'s' },
+             grid: { color: 'rgba(128,128,128,0.1)' },
+             title: { display: true, text: 'generation time', color: '#888', font: { size: 11 } } }
+      }
+    }
+  });
+  // add vertical cap line annotation manually via plugin
+})();
+
+/* ---- data table ---- */
+function renderTable(filter) {
+  const rows = filter === 'all' ? DATA : DATA.filter(d => tier(d.category) === filter);
+  const tbody = document.getElementById('table-body');
+  const MAX_TPS = Math.max(...DATA.map(d => d.tps));
+  tbody.innerHTML = rows.map(d => {
+    const t = tier(d.category);
+    const barW = Math.round((d.tps / MAX_TPS) * 80);
+    const churnFlag = d.churn > 0
+      ? `<span class="flag">⚠ ${d.churn}</span>`
+      : `<span style="color:var(--text3)">0</span>`;
+    const capFlag = d.eval_count >= 256 ? ' <span style="color:var(--moderate);font-size:11px;">cap</span>' : '';
+    return `<tr>
+      <td style="max-width:320px; font-size:13px;">${d.prompt.slice(0,70)}${d.prompt.length>70?'…':''}</td>
+      <td><span class="cat-badge" style="background:${CAT_BG[t]};color:${CAT_COLOR[t]}">${t}</span></td>
+      <td class="mono">${(d.gen_ms/1000).toFixed(1)}s</td>
+      <td class="mono">${d.eval_count}${capFlag}</td>
+      <td>
+        <div class="tps-bar-wrap">
+          <div class="tps-bar" style="width:${barW}px;background:${CAT_COLOR[t]}"></div>
+          <span class="mono" style="font-size:12px;">${d.tps}</span>
+        </div>
+      </td>
+      <td>${churnFlag}</td>
+    </tr>`;
+  }).join('');
+}
+
+renderTable('all');
+
+document.getElementById('filter-tabs').addEventListener('click', e => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  renderTable(tab.dataset.filter);
+});
+</script>
+</body>
+</html>
